@@ -1,5 +1,5 @@
 
-# Δημιουργία συνθετικών συνόλων δεδομένων ομοιόμορφης κατανομής
+# Artificial normal distribution datasets generating
 import random
 import string
 import pandas as pd 
@@ -21,7 +21,7 @@ points = uniformA
 points2 = uniformB
 
 
-# imports για spark και cluster
+# imports for spark and local clustering
 import findspark
 findspark.init()
 import pyspark # only run after findspark.init()
@@ -54,62 +54,61 @@ from pyspark.sql import DataFrame
 import time
 
 
-# Δημιουργία schema για spark dataframe για το πρώτο σύνολο
+# create schema for spark dataframe for the first dataset
 schema = StructType([
     StructField('name', StringType(), True),
     StructField('lat', FloatType(), True),
     StructField('lon', FloatType(), True)
 ])
 
-# Μετατροπή python list σε RDD
+# convert python list to RDD
 rdd = spark.sparkContext.parallelize(points)
 
-# δημιουργία spark data frame
+# create spark data frame
 df6 = spark.createDataFrame(rdd,schema)
 
 
-# Δημιουργία schema για spark dataframe για το δεύτερο σύνολο
+# create schema for spark dataframe for the second dataset
 schema2 = StructType([
     StructField('name', StringType(), True),
     StructField('lat', FloatType(), True),
     StructField('lon', FloatType(), True)
 ])
 
-# Μετατροπή python list σε RDD
+# convert python list to RDD
 rdd2 = spark.sparkContext.parallelize(points2)
 
-# δημιουργία spark data frame
+# create spark data frame
 df7 = spark.createDataFrame(rdd2,schema2)
 
 
 
-# επιθυμητο "θ"
+# wanted distance
 theta = 5
 
-# επιθυμητός αριθμός partitions
+# wanted partitions number
 partitions_n = 4
 
-# επιθυμητό ποσοστό των δεδομένων , το οποόι θα πάρουμε ως δείγμα
+# wanted dataset percentage to take as a sample
 dataset_fracture = 0.9
 
-# επιθυμη΄τό σφάλμα κατά των υπολογισμό ποσοστημορίων. Υψηλό σφάλμα φέρνει γρηγορότερο χρόνο και χαμηλή ακρίβεια. Χαμηλο σφάλμα φέρνει τα αντίστροφα
+# wanted error that you are willing to take. High value of error offers faster times but lower accuracy. Low value offers reversed results
 relative_error = 0.1
 
 
-# κάθε σετ πα΄ίρνει μια ένδειξη
+# we give an index to each set
 
 df6 = df6.withColumn("set0",lit("A"))
 df7 = df7.withColumn("set0",lit("B"))
 
-# ένωση των δυο σετ σε ένα
+# union of the two datasets
 df8 = df6.union(df7)
 
 
-
-# δείγμα από τα δεδομένα
+# sampling
 sample_df = df8.sample(dataset_fracture)
 
-# εξεύρεση προσεγγιστικών ποσοστημορίων ανα latitude
+# finding of quantiles based on latitude
 qlist = []
 for i in range(1, partitions_n):
     q = sample_df.approxQuantile("lat", [i/partitions_n], relative_error)
@@ -121,10 +120,10 @@ for i in range(1, partitions_n):
 print(qlist)
 
 
+# comparing lat of each record to the latitiudes that have been defined as boundaries.
+# each record gets an attachement of the spatial zone where it belongs to
 
-# συγκρίνεται το lat κάθε εγγραφ΄ής με τα lat που έχουν οριστεί σαν όρια, 
-# και η εγγραφή παίρνει την ΄ένδειξη της ζώνης στην οποία ανήκει
-# η διαδικασία έχει αυτοματοποιηθεί ώστε να λειτουργεί για κάθε επιθυμητό αριθμό partitions
+# the process is automated so as to work for everey wanted partitions number
 for i in range(partitions_n):
     if i ==0:
         df8=df8.withColumn("zone_id",
@@ -140,21 +139,19 @@ for i in range(partitions_n):
         
 df10=df8
 
-# μετατροπή του θ σε μοίρες
+# convert distance to degrees
 diff1 = theta / 110.567
 
-# πρόσθεση στήλης με όρια τα οποία αν το "lat+-θ" ξεπερ΄άσει, να πρέπει να αντιγραφεί αυτή η εγγραφή για νέα ΖΩΝΗ.
+# importing of columns with boundaries that if "lat+theta" goes past them, then that record should be copied for a new ZONE
 df11 = df10.withColumn("sum_plus", col("lat")+diff1)
 df11 = df11.withColumn("sum_minus", col("lat")-diff1)
 
-# προσωρινή δημιουργία ενός sql πίνακα βάσει του dataframe μας
+# temporary sql table based on our dataframe
 df11.createOrReplaceTempView("table10_0")
 
-# spark sql ερωτήματα ώστε να βρεθούν ποιες εγγραφές πρ΄έπει να αντιγραφούν
-# η διαδικασία είναι πλήρως αυτοματοποιημένη ώστε να λειτουργεί για οποιοδήποτε αριθμό partitions 
-# και άρα για οποιαδήποτε ποσοστημόρια υπάρξουν.
-# δημιουργείται python dictionary, με key κάθε ζώνη που περιμένει νέες εγγραφές, 
-# και values τις έξτρα εγγραφές που θα "υποδεχτεί" κάθε ζώνη 
+# spark sql queries so as to find which records should be copied. The process is fully automated so as to be able to work for every amount of partitions, and so for every quantiles that we may meet
+# creating of a python dictionary. KEY is the zone, VALUE are the new records that will be copied to each zone
+
 extra_dfs = {}    
 for i in range(partitions_n):
     if i == 0:
@@ -167,18 +164,18 @@ for i in range(partitions_n):
         extra_dfs["exs{0}".format(i)] = spark.sql("SELECT * FROM table10_0 WHERE ( set0 = 'B' AND zone_id < {} AND sum_plus > {} ) ".format(i, qlist[i-1]))
         
 
-# διαγραφή των στηλών που δεν μας ενδιαφέρουν πλέον
+# drop columns that we don't need any more
 df11 = df11.drop('sum_plus', 'sum_minus')
 
-# για κάθε σύνολο 'εξτρα εγγραφών', διαγράφονται οι στήλες που δεν χρειαζόμαστε πλέον
-# και προστίθεται μια στ΄ηλη με ένδειξη την επιπλέον ζώνη που πλέον θα "ανήκουν"
+# for each "extra records", we drop the columns that we don't need and we import a column with the indec of the zone that they now belong to.
 j=0
 extra_dfs_final_dict = {}
 for key, value in extra_dfs.items():
     extra_dfs_final_dict["exs{0}".format(j)] = extra_dfs[key].drop('sum_plus', 'sum_minus').withColumn("zone_id",lit(j))
     j+=1
+
     
-# ένωση όλων των εγγραφών, αρχικών και έξτρα.
+# union of everything
 dfs = []
 dfs.append(df11)
 for key, value in extra_dfs_final_dict.items():
@@ -190,17 +187,16 @@ dff.cache()
 
 
 
-# λογω της ιδιομορφίας του τοπικού ψευδο-clustering, παρατηρήθηκε ότι προκειμένου να μοιραστούν τα δεδομένα σε n partitions,
-# πρέπει να δοθεί σαν είσοδος στην εντολή repartition, προσεγγιστικά η τιμή n*6
-no_of_partitions = partitions_n*6
+no_of_partitions = partitions_n
+#no_of_partitions = partitions_n*6
 
-# διαχωρισμός των δεδομένων σε partition με βάση τη στήλη της ζώνης
+# repartition of the data, based on zone index
 dffj1 = dff.repartition(no_of_partitions, col("zone_id"))
 
-# δημιουργία sql πίνακα
+#  sql table
 dffj1.createOrReplaceTempView("dffj")
 
-# δημιουργία δύο dataframes, ένα για κάθε κατηγορία των δεδομένων. (δηλαδή από ποιο σύνολο είχαν προέρθει)
+# creating of dataframes, one for each category of data
 df_A = spark.sql("SELECT * FROM dffj where set0 = 'A'")
 df_B = spark.sql("SELECT * FROM dffj where set0 = 'B'")
 
@@ -212,13 +208,11 @@ df_B.cache()
 
 
 #print("Number of partitions: {}".format(dffj1.rdd.getNumPartitions())) 
-# ποσότητες διαμοιρασμού δεδομένων, δηλαδή πόσες εγγραφές αντιστοιχούν σε κάθε partition
+# checking of the records amount in each partition
 print('Partitioning distribution: '+ str(dffj1.rdd.glom().map(len).collect()))
 
 
-
-# δημιουργία συνάρτησης για cross join μεταξύ δύο πινάκων, με όρισμα ένα query που υπολογίζει αν δύο σημεία βρ΄ίσκονται
-# σε απόσταση μικρότερης του θ που έχουμε ορίσει
+# cross join between the two tables. we are searching for pairs in a distance below theta
 def distance(df1, df2):
     df1.createOrReplaceTempView("table1")
     df2.createOrReplaceTempView("table2")
@@ -227,7 +221,6 @@ def distance(df1, df2):
 
 start_time = time.time()
 
-# εκτέλεση της συνάρτησης για τη σύζευξη
 distance(df_A, df_B)
 
 end_time = time.time()
